@@ -3,12 +3,41 @@ import time, glob, sys
 from datetime import datetime
 import propar
 
+# experimental parameters
+on_time  = 10# in Sekunden
+off_time = 10# in Sekunden
+v_NO_values = [1.2, 2.4, 4.8, 9.6, 12.0] # valve flow in %
+
+# system parameters
 Bronhorst_COM = 'COM1'
 Lamp_COM      = 'COM4'
-on_time = 10# in Sekunden
-off_time = 10# in Sekunden
-cycle_count = 5
 
+# valve definitions in BH_dev_lib
+# 'abritrary name': {'device': device object provided by propar
+#                    'serial': serial number of the valve for identification purposes
+#                    'state1': in % - Off state
+#                    'state2': in % - standard on state
+#                    'found': True if the device is present, False, if not (yet) found
+#                    'desc': free text to describe the purpose of the valve
+BH_dev_lib = {
+    'v_dry': {'device': None, 'serial': 'M21213512A', 'state1': 0, 'state2': 6.0, 'found': False, 'desc': 'Luft trocken' },
+    'v_hum': {'device': None, 'serial': 'M21213512B', 'state1': 0, 'state2': 6.0, 'found': False, 'desc': 'Luft feucht' },
+    'v_NO' : {'device': None, 'serial': 'M21213512C', 'state1': 0, 'state2': 1.2, 'found': False, 'desc': 'NO' }
+}
+
+def programInfo():
+    print("##########################################################")
+    print("# small script to operate some valves and a UV-Lamp via  #")
+    print("# serial port                                            #")
+    print("#                                                        #")
+    print("# © 2022 Florian Kleiner                                 #")
+    print("#   Bauhaus-Universität Weimar                           #")
+    print("#   Finger-Institut für Baustoffkunde                    #")
+    print("#                                                        #")
+    print("##########################################################")
+    print()
+    
+# function to search for available serial ports
 def serial_ports():
     """ Lists serial port names
 
@@ -37,19 +66,11 @@ def serial_ports():
             pass
     return result
 
-#el_flow = propar.Instrument(Bronhorst_COM, 1, baudrate=38400)
-
-#el_flow.setpoint
 #Bronkhorst-stuff
-
-BH_dev_lib = {
-    'v_dry': {'device': None, 'serial': 'M21213512A', 'state1': 0, 'state2': 6.0, 'found': False, 'desc': 'Luft trocken' },
-    'v_hum': {'device': None, 'serial': 'M21213512B', 'state1': 0, 'state2': 6.0, 'found': False, 'desc': 'Luft feucht' },
-    'v_NO' : {'device': None, 'serial': 'M21213512C', 'state1': 0, 'state2': 1.2, 'found': False, 'desc': 'NO' }
-}
 known_devices = {}
 for key, dev in BH_dev_lib.items(): known_devices[dev['serial']] = key
 
+# find all valves by Bronkhorst and compare to the given valves
 def BH_list_valves():
     # Connect to the local instrument.
     el_flow = propar.instrument(Bronhorst_COM)
@@ -63,6 +84,9 @@ def BH_list_valves():
         if node['serial'] in known_devices:
             BH_dev_lib[ known_devices[node['serial']] ]['found'] = True
             BH_dev_lib[ known_devices[node['serial']] ]['device'] = propar.instrument(Bronhorst_COM, node['address'])
+         else:
+            print('  unknown device #{}: {} ({})'.format(node['address'], node['type'], node['serial']) )
+            
 
     for dev in BH_dev_lib.values():
         if dev['found']:
@@ -73,15 +97,14 @@ def BH_list_valves():
     print()
     return el_flow
 
-
 ## lapstuff
 last_time = ''
 def cur_time():
     global last_time
-    output = ' '*20
+    
     now = datetime.now()
     time = now.strftime("%d.%m.%Y %H:%M:%S")
-    if time != last_time: output = time+':'
+    output = time+':' if time != last_time else ' '*20
     last_time = time
     return output
 
@@ -105,17 +128,21 @@ def check_valve_state(valve):
     values = valve['device'].read_parameters(params)
     print('{} valve "{}"  valve output: {:.2f} % (target: {:.2f} %), Temp: {:.1f} °C'.format(cur_time(), valve['desc'], values[0]['data']*10, values[2]['data']/320, values[3]['data']) ) # why to I have to multiply this value by 10??
 
-def set_valve_state( valve, state ):
-    target_value = int(32000/100*valve[state])
+def set_valve_value( valve, val ):
+    target_value = int(32000/100*val)
     print('{} valve "{}"  valve set to: {:.2f} %'.format(cur_time(), valve['desc'], target_value/320) )
     params = [{'proc_nr': 1, 'parm_nr': 1, 'parm_type': propar.PP_TYPE_INT16, 'data': target_value}]
     # Write parameters returns a propar status code.
     status = valve['device'].write_parameters(params)
     if status != 0: print("failed to set {}! ",valve['desc'], status)
 
+def set_valve_state( valve, state ):
+    set_valve_value( valve, valve[state] )
+
 
 ### actual program start
 if __name__ == '__main__':
+    programInfo():
     print("Hi Dr. Torben!")
     print()
     
@@ -142,40 +169,45 @@ if __name__ == '__main__':
         print()
 
         wait_n_sec = 2
+       
         print("  waiting {} seconds. Cancel with [Ctrl]+[C]...".format(wait_n_sec))
 
         time.sleep(wait_n_sec)
         start_time = datetime.now()
         print()
-        print("{} Starting experiment".format( start_time.strftime("%d.%m.%Y %H:%M:%S") ))
+        print("{} Starting experiment ({} steps)".format( start_time.strftime("%d.%m.%Y %H:%M:%S"), len(v_NO_values) ))
+        date_finished = start_time + datetime.timedelta(0, (off_time + on_time)*len(v_NO_values) )
+        print( 'The experiment will propably be finished at {}'.format(date_finished.strftime("%d.%m.%Y %H:%M")) )
+         
         
         # initial check of paramters of the Bronkhorst valves
-        
+        for dev in BH_dev_lib.values():
+            set_valve_state(dev, 'state2') # state 2 is the standard "open" value of all three valves
+            
         print("initial valve check:")
         for dev in BH_dev_lib.values():
             check_valve_state(dev)
         print()
-
+        
         time.sleep(1)
-        for x in range(cycle_count):
+        for x in range(len(v_NO_values)):
             print("{} Cycle #{:02d}".format(cur_time(), x+1 ))
-            check_valve_state(BH_dev_lib['v_hum'])
-            
-            for dev in BH_dev_lib.values():
-                set_valve_state(dev, 'state1')
-            turn_off_UVLamp()            
-            time.sleep(off_time * 1)
+            # purge the chamber without UV lamp
+            turn_off_UVLamp()
+            set_valve_value( BH_dev_lib['v_NO'], v_NO_values[x] )
+            wait_n_sec = 2
+            time.sleep(wait_n_sec) # wait n seconds until the valve was able to set the value...
+            check_valve_state(BH_dev_lib['v_NO'])
+            time.sleep(off_time-wait_n_sec) # let the lamp off and purge the chamber for the defined time
 
             print()
-
-            for dev in BH_dev_lib.values():
-                check_valve_state(dev)
-            for dev in BH_dev_lib.values():
-                set_valve_state(dev, 'state2')
+            
+            # turn the UV lamp on, when the gasflow is stable
+            check_valve_state(BH_dev_lib['v_NO'])
             turn_on_UVLamp()
-            time.sleep(on_time * 1)
+            time.sleep(on_time) # let the lamp on for the defined time
 
-            print('-'*20)
+            print('-'*40)
         
         turn_off_UVLamp()
 
