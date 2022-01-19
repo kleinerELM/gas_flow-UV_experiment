@@ -10,7 +10,7 @@ on_time  = 30*60# in Sekunden
 v_NO_values = [1.2, 1.8, 3.0, 6.0, 12.0] # valve flow in %
 
 # system parameters
-Bronhorst_COM = 'COM1'
+Bronkhorst_COM = 'COM1'
 Lamp_COM      = 'COM4'
 
 # valve definitions in BH_dev_lib
@@ -37,7 +37,7 @@ def programInfo():
     print("#                                                        #")
     print("##########################################################")
     print()
-    
+
 # function to search for available serial ports
 def serial_ports():
     """ Lists serial port names
@@ -74,7 +74,7 @@ for key, dev in BH_dev_lib.items(): known_devices[dev['serial']] = key
 # find all valves by Bronkhorst and compare to the given valves
 def BH_list_valves():
     # Connect to the local instrument.
-    el_flow = propar.instrument(Bronhorst_COM)
+    el_flow = propar.instrument(Bronkhorst_COM)
 
     # Use the get_nodes function of the master of the instrument to get a list of instruments on the network
     nodes = el_flow.master.get_nodes()
@@ -84,10 +84,10 @@ def BH_list_valves():
         #print('  device #{}: {} ({})'.format(node['address'], node['type'], node['serial']) )
         if node['serial'] in known_devices:
             BH_dev_lib[ known_devices[node['serial']] ]['found'] = True
-            BH_dev_lib[ known_devices[node['serial']] ]['device'] = propar.instrument(Bronhorst_COM, node['address'])
+            BH_dev_lib[ known_devices[node['serial']] ]['device'] = propar.instrument(Bronkhorst_COM, node['address'])
         else:
             print('  unknown device #{}: {} ({})'.format(node['address'], node['type'], node['serial']) )
-            
+
 
     for dev in BH_dev_lib.values():
         if dev['found']:
@@ -102,7 +102,7 @@ def BH_list_valves():
 last_time = ''
 def cur_time():
     global last_time
-    
+
     now = datetime.now()
     time = now.strftime("%d.%m.%Y %H:%M:%S")
     output = time+':' if time != last_time else ' '*20
@@ -120,17 +120,16 @@ def turn_off_UVLamp():
     toLamp('Off')
 
 def check_valve_state(valve):
-    # initial check of paramters of the Bronkhorst valves      
+    # initial check of paramters of the Bronkhorst valves
     params = [{'proc_nr':  33, 'parm_nr':  0, 'parm_type': propar.PP_TYPE_FLOAT},  # fmeasure (measured value indicates the amount of mass flow or pressure metered)
               {'proc_nr':  33, 'parm_nr':  3, 'parm_type': propar.PP_TYPE_FLOAT},  # fsetpoint (Setpoint is used to tell the instrument what the wanted amount of mass flow or pressure is)
               {'proc_nr':   1, 'parm_nr':  1, 'parm_type': propar.PP_TYPE_INT16},  # setpoint (Setpoint is used to tell the instrument what the wanted amount of mass flow or pressure is)
               {'proc_nr':  33, 'parm_nr':  7, 'parm_type': propar.PP_TYPE_FLOAT}]  # temperature
-    
-    values = valve['device'].read_parameters(params)
-    FlowControlMixin
-    target_flow = values[2]['data']/320
 
+    values = valve['device'].read_parameters(params)
+    target_flow = values[2]['data']/320
     actual_flow = values[0]['data'] if valve['serial'] == 'M21213512C' else values[0]['data']*10
+
     print('{} valve "{}" output: {:.2f} % (target: {:.2f} %), Temp: {:.1f} °C'.format(cur_time(), valve['desc'], actual_flow, target_flow, values[3]['data']) ) # why to I have to multiply this value by 10??
     if target_flow+0.1 < actual_flow or target_flow-0.1 > actual_flow:
         print('{} Warning! Valve output differs more than 0.1% from the target value!'.format(cur_time()))
@@ -153,20 +152,20 @@ if __name__ == '__main__':
     programInfo()
     print("Hi Dr. Torben!")
     print()
-    
+
     available_ports = serial_ports()
     ports_available = False
-    if not Bronhorst_COM in available_ports:
-        raise ConnectionError( 'EL-Flow valves ({}) are not connected! Available ports:'.format(Bronhorst_COM), available_ports)
-    else: 
+    if not Bronkhorst_COM in available_ports:
+        raise ConnectionError( 'EL-Flow valves ({}) are not connected! Available ports:'.format(Bronkhorst_COM), available_ports)
+    else:
         el_flow = BH_list_valves()
 
         if not Lamp_COM in available_ports:
             raise ConnectionError( 'Lamp-microcontroller ({}) is not connected! Available ports:'.format(Lamp_COM), available_ports)
-        else: 
+        else:
             port = serial.Serial(Lamp_COM, 115200, timeout=1)
             ports_available = True
-    
+
     if ports_available:
         print('Basic settings:')
         on_time_str  = '{} min'.format(int( on_time/60 ))  if (on_time > 60)  else "{} s".format(int( on_time  ))
@@ -180,7 +179,7 @@ if __name__ == '__main__':
         print()
 
         wait_n_sec = 5
-       
+
         print("waiting {} seconds. Cancel with [Ctrl]+[C]...".format(wait_n_sec))
         time.sleep(wait_n_sec)
         print('-'*40)
@@ -189,7 +188,7 @@ if __name__ == '__main__':
         date_finished = start_time + timedelta(0, (off_time + on_time)*len(v_NO_values) )
         print( 'The experiment will propably be finished at {}'.format(date_finished.strftime("%d.%m.%Y %H:%M")) )
         print()
-        
+
         wait_n_sec = 3 # time to wait inbetween valve-set and measurement
         # initial check of paramters of the Bronkhorst valves
         for dev in BH_dev_lib.values():
@@ -201,29 +200,29 @@ if __name__ == '__main__':
         print()
 
         print('-'*40)
-        
+
         time.sleep(1)
         for x in range(len(v_NO_values)):
             print("{} Cycle {:02d} / {:02d}".format(cur_time(), x+1, len(v_NO_values) ))
             # purge the chamber without UV lamp
             turn_off_UVLamp()
             set_valve_value( BH_dev_lib['v_NO'], v_NO_values[x] )
-            
+
             time.sleep(wait_n_sec) # wait n seconds until the valve was able to set the value...
             check_valve_state(BH_dev_lib['v_NO'])
             time.sleep(off_time-wait_n_sec) # let the lamp off and purge the chamber for the defined time
-           
+
             # turn the UV lamp on, when the gasflow is stable
             check_valve_state(BH_dev_lib['v_NO'])
             turn_on_UVLamp()
             time.sleep(on_time) # let the lamp on for the defined time
 
             print('-'*40)
-        
+
         difference = datetime.now() - start_time
         time_diff = divmod(difference.days * 24 * 60 * 60 + difference.seconds, 60)
         print("Experiment finished within {} min and {} sec".format(time_diff[0], time_diff[1]))
-        
+
         print('-'*40)
         print()
         print('turning off all devices:')
