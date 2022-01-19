@@ -1,12 +1,13 @@
+from asyncio.streams import FlowControlMixin
 import serial
 import time, glob, sys
-from datetime import datetime
+from datetime import datetime, timedelta
 import propar
 
 # experimental parameters
-on_time  = 10# in Sekunden
-off_time = 10# in Sekunden
-v_NO_values = [1.2, 2.4, 4.8, 9.6, 12.0] # valve flow in %
+off_time = 30*60# in Sekunden
+on_time  = 30*60# in Sekunden
+v_NO_values = [1.2, 1.8, 3.0, 6.0, 12.0] # valve flow in %
 
 # system parameters
 Bronhorst_COM = 'COM1'
@@ -84,7 +85,7 @@ def BH_list_valves():
         if node['serial'] in known_devices:
             BH_dev_lib[ known_devices[node['serial']] ]['found'] = True
             BH_dev_lib[ known_devices[node['serial']] ]['device'] = propar.instrument(Bronhorst_COM, node['address'])
-         else:
+        else:
             print('  unknown device #{}: {} ({})'.format(node['address'], node['type'], node['serial']) )
             
 
@@ -126,11 +127,18 @@ def check_valve_state(valve):
               {'proc_nr':  33, 'parm_nr':  7, 'parm_type': propar.PP_TYPE_FLOAT}]  # temperature
     
     values = valve['device'].read_parameters(params)
-    print('{} valve "{}"  valve output: {:.2f} % (target: {:.2f} %), Temp: {:.1f} °C'.format(cur_time(), valve['desc'], values[0]['data']*10, values[2]['data']/320, values[3]['data']) ) # why to I have to multiply this value by 10??
+    FlowControlMixin
+    target_flow = values[2]['data']/320
+
+    actual_flow = values[0]['data'] if valve['serial'] == 'M21213512C' else values[0]['data']*10
+    print('{} valve "{}" output: {:.2f} % (target: {:.2f} %), Temp: {:.1f} °C'.format(cur_time(), valve['desc'], actual_flow, target_flow, values[3]['data']) ) # why to I have to multiply this value by 10??
+    if target_flow+0.1 < actual_flow or target_flow-0.1 > actual_flow:
+        print('{} Warning! Valve output differs more than 0.1% from the target value!'.format(cur_time()))
+        print('{} Make shure, that the main valves are opened!'.format(cur_time()))
 
 def set_valve_value( valve, val ):
     target_value = int(32000/100*val)
-    print('{} valve "{}"  valve set to: {:.2f} %'.format(cur_time(), valve['desc'], target_value/320) )
+    print('{} valve "{}" is set to: {:.2f} %'.format(cur_time(), valve['desc'], target_value/320) )
     params = [{'proc_nr': 1, 'parm_nr': 1, 'parm_type': propar.PP_TYPE_INT16, 'data': target_value}]
     # Write parameters returns a propar status code.
     status = valve['device'].write_parameters(params)
@@ -142,7 +150,7 @@ def set_valve_state( valve, state ):
 
 ### actual program start
 if __name__ == '__main__':
-    programInfo():
+    programInfo()
     print("Hi Dr. Torben!")
     print()
     
@@ -160,48 +168,51 @@ if __name__ == '__main__':
             ports_available = True
     
     if ports_available:
-        print("Basic settings:")
-        on_time_str  = "{} min".format(int( on_time/60 ))  if (on_time > 60)  else "{} s".format(int( on_time  ))
-        print("  Lamp On-time: {}".format(on_time_str))
+        print('Basic settings:')
+        on_time_str  = '{} min'.format(int( on_time/60 ))  if (on_time > 60)  else "{} s".format(int( on_time  ))
+        print('  Lamp On-time: {}'.format(on_time_str))
         off_time_str = "{} min".format(int( off_time/60 )) if (off_time > 60) else "{} s".format(int( off_time ))
-        print("  Lamp Off-time: {}".format(off_time_str))
-        print("  Lamp will be turned on {} times".format(cycle_count))
+        print('  Lamp Off-time: {}'.format(off_time_str))
+        print('  Lamp will be turned on {} times'.format(len(v_NO_values)))
+        v_NO_values_str = ['{:.1f} %'.format(element) for element in v_NO_values]
+        print('  Valve "{}" will iterate through {} gasflow'.format( BH_dev_lib['v_NO']['desc'], ", ".join(v_NO_values_str)))
+
         print()
 
-        wait_n_sec = 2
+        wait_n_sec = 5
        
-        print("  waiting {} seconds. Cancel with [Ctrl]+[C]...".format(wait_n_sec))
-
+        print("waiting {} seconds. Cancel with [Ctrl]+[C]...".format(wait_n_sec))
         time.sleep(wait_n_sec)
+        print('-'*40)
         start_time = datetime.now()
-        print()
         print("{} Starting experiment ({} steps)".format( start_time.strftime("%d.%m.%Y %H:%M:%S"), len(v_NO_values) ))
-        date_finished = start_time + datetime.timedelta(0, (off_time + on_time)*len(v_NO_values) )
+        date_finished = start_time + timedelta(0, (off_time + on_time)*len(v_NO_values) )
         print( 'The experiment will propably be finished at {}'.format(date_finished.strftime("%d.%m.%Y %H:%M")) )
-         
+        print()
         
+        wait_n_sec = 3 # time to wait inbetween valve-set and measurement
         # initial check of paramters of the Bronkhorst valves
         for dev in BH_dev_lib.values():
             set_valve_state(dev, 'state2') # state 2 is the standard "open" value of all three valves
-            
+        time.sleep(wait_n_sec)
         print("initial valve check:")
         for dev in BH_dev_lib.values():
             check_valve_state(dev)
         print()
+
+        print('-'*40)
         
         time.sleep(1)
         for x in range(len(v_NO_values)):
-            print("{} Cycle #{:02d}".format(cur_time(), x+1 ))
+            print("{} Cycle {:02d} / {:02d}".format(cur_time(), x+1, len(v_NO_values) ))
             # purge the chamber without UV lamp
             turn_off_UVLamp()
             set_valve_value( BH_dev_lib['v_NO'], v_NO_values[x] )
-            wait_n_sec = 2
+            
             time.sleep(wait_n_sec) # wait n seconds until the valve was able to set the value...
             check_valve_state(BH_dev_lib['v_NO'])
             time.sleep(off_time-wait_n_sec) # let the lamp off and purge the chamber for the defined time
-
-            print()
-            
+           
             # turn the UV lamp on, when the gasflow is stable
             check_valve_state(BH_dev_lib['v_NO'])
             turn_on_UVLamp()
@@ -209,11 +220,18 @@ if __name__ == '__main__':
 
             print('-'*40)
         
-        turn_off_UVLamp()
-
         difference = datetime.now() - start_time
         time_diff = divmod(difference.days * 24 * 60 * 60 + difference.seconds, 60)
         print("Experiment finished within {} min and {} sec".format(time_diff[0], time_diff[1]))
+        
+        print('-'*40)
+        print()
+        print('turning off all devices:')
+        turn_off_UVLamp()
+
+        for dev in BH_dev_lib.values():
+            set_valve_state(dev, 'state1') # state 2 is the standard "open" value of all three valves
+
         print()
         input("Press Enter to close the experiment...")
 
